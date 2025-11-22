@@ -23,6 +23,7 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
+    "firebase-admin": "^13.6.0",
     "minio": "^8.0.6",
     "multer": "^2.0.2",
     "multer-s3": "^3.0.1"

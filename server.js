@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
@@ -8,6 +7,7 @@ const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
 const fs = require('fs');
+const { db } = require('./firebase');
 
 const app = express();
 app.use(cors());
@@ -65,6 +65,69 @@ app.get('/file/:id', async (req, res) => {
   }
 });
 
+app.post('/achievements/calculate', express.json(), async (req, res) => {
+  try {
+    const { userId, projects, reviews } = req.body;
+
+    if (!userId || !projects || !reviews)
+      return res.status(400).json({ error: 'Missing userId/projects/reviews' });
+
+    // Загружаем дефиниции ачивок
+    const achSnapshot = await db.collection('achievements').get();
+    const achievementDefs = achSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    // Метрики
+    const userReviews = reviews.filter((r) => r.toUserId === userId);
+    const authored = projects.filter((p) => p.creatorId === userId);
+    const completed = authored.filter((p) => p.status === 'completed');
+
+    const metrics = {
+      avgRating: userReviews.length
+        ? userReviews.reduce((s, r) => s + (r.hardSkills ?? 0), 0) / userReviews.length
+        : 0,
+      completedProjects: completed.length,
+      positiveComments: userReviews.filter((r) =>
+        (r.comment || '').toLowerCase().includes('спасибо'),
+      ).length,
+    };
+
+    function checkRule(rule) {
+      if (!rule) return false;
+      if (rule.and) return rule.and.every(checkRule);
+      if (rule.or) return rule.or.some(checkRule);
+
+      const left = metrics[rule.metric];
+      const right = rule.value;
+
+      switch (rule.operator) {
+        case '>=':
+          return left >= right;
+        case '<=':
+          return left <= right;
+        case '>':
+          return left > right;
+        case '<':
+          return left < right;
+        case '==':
+          return left == right;
+        case '!=':
+          return left != right;
+        default:
+          return false;
+      }
+    }
+
+    const result = achievementDefs.filter((a) => checkRule(a.rule));
+
+    res.json({ achievements: result });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Achievement calculation failed' });
+  }
+});
 
 // HTTPS сервер с настоящим сертификатом
 const options = {

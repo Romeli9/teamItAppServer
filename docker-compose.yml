@@ -1,0 +1,30 @@
+version: '3.9'
+
+services:
+  server:
+    build: .
+    container_name: teamit-server
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - '5000:5000'
+    volumes:
+      - ./certs:/etc/letsencrypt/live/teamitserver.ru:ro
+      - ./serviceAccountKey.json:/app/serviceAccountKey.json:ro
+      - ./minio_data:/data
+    depends_on:
+      - minio
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    command: server /data --console-address ":9001"
+    volumes:
+      - ./minio_data:/data
