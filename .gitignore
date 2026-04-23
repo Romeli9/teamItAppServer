@@ -1,3 +1,17 @@
 .env
 node_modules
+dist
+*.log
+.DS_Store
+
+# Prisma
+prisma/migrations/dev.db*
+
+# Docker volumes
+minio_data
+
+# Legacy / secrets
 serviceAccountKey.json
+certs/
+server.js.bak
+firebase.js.bak

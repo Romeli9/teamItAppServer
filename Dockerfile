@@ -1,20 +1,29 @@
-# Используем Node.js 20
-FROM node:20-alpine
-
-# Создаём рабочую папку
+# ─── builder ───────────────────────────────────────────────
+FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Копируем package.json и package-lock.json
 COPY package*.json ./
+RUN npm ci
 
-# Устанавливаем зависимости
-RUN npm install --production
+COPY prisma ./prisma
+RUN npx prisma generate
 
-# Копируем исходники
-COPY . .
+COPY tsconfig*.json nest-cli.json ./
+COPY src ./src
+RUN npm run build
 
-# Экспонируем порт (для HTTPS)
+# ─── runtime ───────────────────────────────────────────────
+FROM node:20-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/dist ./dist
+
 EXPOSE 5000
-
-# Запускаем сервер
-CMD ["node", "server.js"]
+CMD ["node", "dist/main.js"]

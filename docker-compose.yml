@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   server:
     build: .
@@ -7,18 +5,42 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-teamit}:${POSTGRES_PASSWORD:-teamit}@postgres:5432/${POSTGRES_DB:-teamit}?schema=public
+      MINIO_ENDPOINT: minio
     ports:
       - '5000:5000'
     volumes:
       - ./certs:/etc/letsencrypt/live/teamitserver.ru:ro
-      - ./serviceAccountKey.json:/app/serviceAccountKey.json:ro
-      - ./minio_data:/data
     depends_on:
-      - minio
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command: sh -c "npx prisma migrate deploy && node dist/main.js"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: teamit-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-teamit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-teamit}
+      POSTGRES_DB: ${POSTGRES_DB:-teamit}
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-teamit}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   minio:
     image: minio/minio:latest
     container_name: minio
+    restart: always
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
@@ -27,4 +49,8 @@ services:
       - '9001:9001'
     command: server /data --console-address ":9001"
     volumes:
-      - ./minio_data:/data
+      - minio_data:/data
+
+volumes:
+  postgres_data:
+  minio_data:

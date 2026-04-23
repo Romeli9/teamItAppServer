@@ -1,0 +1,213 @@
+// TeamIt backend — Prisma schema
+// Data model migrated from Firestore collections: users, projects, chats,
+// messages, projectRequests, reviews, notifications, achievements.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────── Users ──────────────────────────────
+
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  passwordHash       String
+  userName           String
+  avatar             String?
+  background         String?
+  roles              String[]  @default([])
+  skills             String[]  @default([])
+  // Profile extras (carried over from Firestore shape)
+  aboutMe            String?
+  telegram           String?
+  experience         String?
+  hardSkills         Json?     // Skill[] from emsiApi
+  softSkills         Json?
+  // Reputation — recomputed from Review rows; see ReviewsService
+  strengths          Json?     // { [strength: string]: count }
+  rating             Float     @default(0)
+  reviewsCount       Int       @default(0)
+  avgRating          Float     @default(0)
+  completedProjects  Int       @default(0)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  createdProjects    Project[]          @relation("ProjectCreator")
+  projectRequests    ProjectRequest[]
+  sentMessages       Message[]          @relation("MessageSender")
+  chatParticipations ChatParticipant[]
+  reviewsAuthored    Review[]           @relation("ReviewFrom")
+  reviewsReceived    Review[]           @relation("ReviewTo")
+  notifications      Notification[]
+  achievements       UserAchievement[]
+}
+
+// ────────────────────────────── Projects ─────────────────────────────
+
+model Project {
+  id          String   @id @default(cuid())
+  creatorId   String
+  name        String
+  description String
+  required    String[] @default([])
+  // Parallel array to `required`: members[i] holds the userId that fills
+  // role required[i], or '-' if the slot is vacant. Legacy convention from
+  // the Firestore schema — keep as-is so the mobile UI doesn't need to
+  // reshape data (see Project.tsx where members[ix] === '-' is checked).
+  members     String[] @default([])
+  categories  String[] @default([])
+  hardSkills  Json?
+  softSkills  Json?
+  photo       String?
+  status      String   @default("started")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  creator  User             @relation("ProjectCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  requests ProjectRequest[]
+  chats    Chat[]
+  reviews  Review[]
+
+  @@index([creatorId])
+}
+
+model ProjectRequest {
+  id         String   @id @default(cuid())
+  projectId  String
+  fromUserId String   // requester
+  toUserId   String   // denormalized creator id at request time — fast "my incoming" queries
+  role       String   // one of project.required[]
+  message    String?
+  status     String   @default("pending") // pending | accepted | rejected
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fromUser User    @relation(fields: [fromUserId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status])
+  @@index([fromUserId])
+  @@index([toUserId, status])
+}
+
+// ────────────────────────────── Chats ────────────────────────────────
+
+model Chat {
+  id                  String    @id @default(cuid())
+  projectId           String?
+  name                String    @default("")
+  image               String?
+  group               Boolean   @default(false)
+  lastMessage         String?
+  lastMessageAuthorId String?
+  lastMessageAt       DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  project      Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  participants ChatParticipant[]
+  messages     Message[]
+
+  @@index([projectId])
+}
+
+model ChatParticipant {
+  chatId String
+  userId String
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([chatId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  chatId      String
+  senderId    String
+  text        String?
+  attachments Json?    // [{ type: 'image'|'file'|'voice', url, name?, size?, duration? }]
+  readBy      String[] @default([])
+  createdAt   DateTime @default(now())
+
+  chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender User @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([chatId, createdAt])
+}
+
+// ────────────────────────────── Reviews ──────────────────────────────
+
+model Review {
+  id           String   @id @default(cuid())
+  fromUserId   String
+  toUserId     String
+  projectId    String?
+  role         String   // 'creator' — when creator rates a member; 'member' — when member rates creator
+  // Creator → member scores (optional)
+  hardSkills   Float?
+  softSkills   Float?
+  deadlines    Float?
+  contribution Float?
+  // Member → creator scores (optional)
+  overall      Float?
+  strengths    String[] @default([])
+  comment      String?
+  createdAt    DateTime @default(now())
+
+  fromUser User     @relation("ReviewFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser   User     @relation("ReviewTo", fields: [toUserId], references: [id], onDelete: Cascade)
+  project  Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([toUserId])
+  @@index([projectId])
+}
+
+// ─────────────────────────── Notifications ───────────────────────────
+
+model Notification {
+  id         String   @id @default(cuid())
+  userId     String   // recipient
+  type       String   // 'review' | 'request_accepted' | 'request_rejected' | ...
+  projectId  String?
+  fromUserId String?
+  payload    Json?
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+}
+
+// ──────────────────────────── Achievements ───────────────────────────
+
+model Achievement {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  title       String
+  description String?
+  icon        String?
+  rule        Json     // { metric, operator, value } | { and: [...] } | { or: [...] }
+  createdAt   DateTime @default(now())
+
+  awarded UserAchievement[]
+}
+
+model UserAchievement {
+  userId        String
+  achievementId String
+  awardedAt     DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@id([userId, achievementId])
+}
